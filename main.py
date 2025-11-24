@@ -5,112 +5,162 @@ from typing import List
 
 import pandas as pd
 
-CSV_URL = ("https://docs.google.com/spreadsheets/d/e/"
-           "2PACX-1vS0GkXnQMdKYZITuuMsAzeWDtGUqEJ3lWwqNdA67NewOsDOgqsZHKHECEEkea4nrukx4-DqxKmf62nC"
-           "/pub?gid=1149576218&output=csv")
+# Remote CSV export URL (live Google Sheet)
+CSV_URL = (
+    "https://docs.google.com/spreadsheets/d/e/"
+    "2PACX-1vS0GkXnQMdKYZITuuMsAzeWDtGUqEJ3lWwqNdA67NewOsDOgqsZHKHECEEkea4nrukx4-DqxKmf62nC"
+    "/pub?gid=1149576218&output=csv"
+)
 
+# Optional local fallback
+LOCAL_FALLBACK = "sheet_cache.csv"
+
+
+# -------------------------------------------------------
+# LOAD DATA (Remote Google Sheet with graceful fallback)
+# -------------------------------------------------------
 def load_data() -> pd.DataFrame:
-    print(f"Loading data from remote Google Sheet: {CSV_URL}")
-    df = pd.read_csv(CSV_URL)
-    return df
-
-
+    print(f"Loading data from Google Sheet…")
     try:
-        return pd.read_csv(SHEET_URL)
+        df = pd.read_csv(CSV_URL)
+        df.to_csv(LOCAL_FALLBACK, index=False)  # Keep local backup
+        print("✔ Remote sheet loaded.")
+        return df
     except Exception as exc:
         if os.path.exists(LOCAL_FALLBACK):
-            print(f"⚠️  Remote download failed ({exc}); using local cache: {LOCAL_FALLBACK}")
+            print(f"⚠ Remote load failed: {exc}")
+            print(f"→ Loading local cached file: {LOCAL_FALLBACK}")
             return pd.read_csv(LOCAL_FALLBACK)
 
-        raise RuntimeError(
-            "Unable to download the Google Sheet and no local cache was found. "
-            "Set SHEET_LOCAL_PATH to a reachable CSV or place a sheet_cache.csv file alongside main.py."
-        ) from exc
+        raise RuntimeError("Google Sheet unreachable AND no local backup found.") from exc
 
+
+# -------------------------------------------------------
+# CLEAN + AUTO-DETECT COLUMN NAMES
+# -------------------------------------------------------
 def clean_and_filter(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Keep only the required columns, rows with valid dates, Central region only, and normalize
-    coordinates.
-    """
-    df = df.rename(
-        columns={
-            'B': 'SiteName',
-            'D': 'Region',
-            'F': 'CityName',
-            'L': 'lat',
-            'M': 'lng',
-            'AJ': 'NextFuelingPlan',
-        }
+    # Normalize all column names
+    df.columns = (
+        df.columns.astype(str)
+        .str.strip()
+        .str.replace(" ", "", regex=False)
+        .str.replace("-", "", regex=False)
+        .str.replace("_", "", regex=False)
+        .str.lower()
     )
 
-    df['NextFuelingPlan'] = pd.to_datetime(df['NextFuelingPlan'], errors='coerce')
-    df = df.dropna(subset=['NextFuelingPlan'])
+    # Auto-detect possible column names
+    site_candidates = ["sitename", "site", "name", "cowid", "siteno", "sitenumber"]
+    city_candidates = ["cityname", "city", "area", "location", "region"]
+    fuel_candidates = ["nextfuelingplan", "nextfueldate", "nextfuel", "fueldate", "fuelplan"]
+    lat_candidates = ["lat", "latitude", "x", "gpslat", "site_lat"]
+    lng_candidates = ["lng", "lon", "long", "longitude", "gpslng", "site_lng"]
 
-    df['Region'] = df['Region'].astype(str).str.strip().str.casefold()
-    df = df[df['Region'] == 'central']
+    # Helper to find first matching column
+    def pick(col_list):
+        return next((c for c in df.columns if c in col_list), None)
 
-    df['lat'] = pd.to_numeric(df.get('lat'), errors='coerce')
-    df['lng'] = pd.to_numeric(df.get('lng'), errors='coerce')
+    site_col = pick(site_candidates)
+    city_col = pick(city_candidates)
+    fuel_col = pick(fuel_candidates)
+    lat_col = pick(lat_candidates)
+    lng_col = pick(lng_candidates)
 
-    return df[['SiteName', 'CityName', 'NextFuelingPlan', 'lat', 'lng']]
+    # Ensure fuel column always exists
+    if fuel_col is None:
+        df["nextfuelingplan"] = pd.NaT
+        fuel_col = "nextfuelingplan"
 
+    # Convert date column
+    df[fuel_col] = pd.to_datetime(df[fuel_col], errors="coerce")
+    df = df.dropna(subset=[fuel_col])
+
+    # Ensure site & city exist
+    if site_col is None:
+        df["sitename"] = "Unknown"
+        site_col = "sitename"
+
+    if city_col is None:
+        df["cityname"] = "Unknown"
+        city_col = "cityname"
+
+    # Convert latitude & longitude if present
+    df["lat"] = pd.to_numeric(df.get(lat_col), errors="coerce") if lat_col else None
+    df["lng"] = pd.to_numeric(df.get(lng_col), errors="coerce") if lng_col else None
+
+    print(f"""
+[INFO] Auto-detected columns:
+   Site       → {site_col}
+   City       → {city_col}
+   Fuel Date  → {fuel_col}
+   Latitude   → {lat_col}
+   Longitude  → {lng_col}
+""")
+
+    return df[[site_col, city_col, fuel_col, "lat", "lng"]]
+
+
+# -------------------------------------------------------
+# REPORT GENERATION
+# -------------------------------------------------------
 def generate_reports(df: pd.DataFrame) -> None:
-    """Generate CSVs for today's and pending fueling plans."""
     today = pd.to_datetime(datetime.today().date())
 
-    df_today = df[df['NextFuelingPlan'] == today]
-    df_pending = df[df['NextFuelingPlan'] < today]
+    df_today = df[df[df.columns[2]] == today]
+    df_pending = df[df[df.columns[2]] < today]
 
-    df_today[['SiteName', 'CityName', 'NextFuelingPlan']].to_csv('fuel_today.csv', index=False)
-    df_pending[['SiteName', 'CityName', 'NextFuelingPlan']].to_csv('fuel_pending.csv', index=False)
+    df_today.to_csv("fuel_today.csv", index=False)
+    df_pending.to_csv("fuel_pending.csv", index=False)
 
-    print("\n✔ fuel_today.csv generated.")
+    print("✔ fuel_today.csv generated.")
     print("✔ fuel_pending.csv generated.")
     print(f"   → Due today: {len(df_today)}")
-    print(f"   → Pending/overdue: {len(df_pending)}\n")
+    print(f"   → Pending/overdue: {len(df_pending)}")
 
 
-def generate_dashboard_data(df: pd.DataFrame, output_path: str = 'data.json') -> None:
-    """Create a JSON export for the dashboard, preserving location data when present."""
-
-    def _sanitize_coordinate(value) -> float | None:
-        if pd.isna(value):
-            return None
-        return float(value)
-
+# -------------------------------------------------------
+# DASHBOARD JSON EXPORT
+# -------------------------------------------------------
+def generate_dashboard_data(df: pd.DataFrame, output_path: str = "data.json") -> None:
     records: List[dict] = []
 
-    for record in df.to_dict(orient='records'):
-        next_plan = record['NextFuelingPlan']
-        next_plan_date = next_plan.date()
+    for r in df.to_dict(orient="records"):
+        date_value = r[df.columns[2]]  # 3rd column = fuel date
 
         records.append(
             {
-                'SiteName': record['SiteName'],
-                'CityName': record['CityName'],
-                'NextFuelingPlan': next_plan_date.isoformat(),
-                'lat': _sanitize_coordinate(record.get('lat')),
-                'lng': _sanitize_coordinate(record.get('lng')),
+                "SiteName": r[df.columns[0]],
+                "CityName": r[df.columns[1]],
+                "NextFuelingPlan": date_value.date().isoformat(),
+                "lat": float(r["lat"]) if r["lat"] else None,
+                "lng": float(r["lng"]) if r["lng"] else None,
             }
         )
 
-    with open(output_path, 'w', encoding='utf-8') as fp:
-        json.dump(records, fp, ensure_ascii=False, indent=2)
+    with open(output_path, "w", encoding="utf-8") as fp:
+        json.dump(records, fp, indent=2, ensure_ascii=False)
 
     print(f"✔ {output_path} generated for the dashboard.")
 
+
+# -------------------------------------------------------
+# MAIN
+# -------------------------------------------------------
 def main() -> None:
-    print("\nLoading Central Fuel Plan database...")
+    print("\nLoading Central Fuel Plan database…")
     df = load_data()
 
-    print("Filtering valid date entries (Column AJ) and extracting required fields...")
+    print("Cleaning & filtering data…")
     df = clean_and_filter(df)
 
-    print("Generating fuel plan reports...")
+    print("Generating reports…")
     generate_reports(df)
 
-    print("Preparing data.json for the dashboard...")
+    print("Exporting dashboard data…")
     generate_dashboard_data(df)
+
+    print("\n✔ All tasks completed successfully.\n")
+
 
 if __name__ == "__main__":
     main()
