@@ -6,10 +6,9 @@ const DATA_URL = "data.json";
 const ONE_DAY = 24 * 60 * 60 * 1000;
 
 const COLOR = {
-  DUE: "#fb6d5d",
-  TOMORROW: "#ffc857",
-  AFTER: "#ff9f1c",
-  HEALTHY: "#3ad17c",
+  DUE: "#fb6d5d",      // today / overdue
+  TOMORROW: "#ffc857", // tomorrow
+  AFTER: "#3ad17c",    // after tomorrow & healthy (green)
 };
 
 //-------------------------------------------------------------
@@ -50,27 +49,23 @@ function toggleLoading(state) {
 }
 
 //-------------------------------------------------------------
-// HELPERS
+// DATE HELPERS
 //-------------------------------------------------------------
 function parseDate(str) {
   if (!str) return null;
 
-  // If no year → append current year
-  if (/^\d{1,2}-[A-Za-z]{3}$/i.test(str)) {
-    const currentYear = new Date().getFullYear();
-    str = `${str}-${currentYear}`;
-  }
-
+  // Expecting "YYYY-MM-DD" coming from data.json
   const dt = new Date(str);
-  if (isNaN(dt)) return null;
+  if (Number.isNaN(dt.getTime())) return null;
+
   dt.setHours(0, 0, 0, 0);
   return dt;
 }
 
 function dateDiff(dt) {
+  if (!dt) return null;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  if (!dt) return null;
   return Math.round((dt - today) / ONE_DAY);
 }
 
@@ -84,11 +79,40 @@ function formatDate(dt) {
 }
 
 function getStatus(days) {
-  if (days === null) return { label: "unknown", color: COLOR.HEALTHY };
-  if (days <= 0) return { label: "due", color: COLOR.DUE };
+  // Classification exactly as requested
+  if (days === null) return { label: "unknown", color: COLOR.AFTER };
+  if (days <= 0) return { label: "due", color: COLOR.DUE };          // today or overdue
   if (days === 1) return { label: "tomorrow", color: COLOR.TOMORROW };
-  if (days === 2) return { label: "after", color: COLOR.AFTER };
-  return { label: "healthy", color: COLOR.HEALTHY };
+  // >= 2 days
+  return { label: "after", color: COLOR.AFTER };
+}
+
+//-------------------------------------------------------------
+// AUTO-FOCUS LOOP ON RED SITES
+//-------------------------------------------------------------
+let priorityLoopTimer = null;
+let priorityLoopIndex = 0;
+
+function startPriorityLoop(priorityMarkers) {
+  if (priorityLoopTimer) {
+    clearInterval(priorityLoopTimer);
+    priorityLoopTimer = null;
+  }
+
+  if (!priorityMarkers || priorityMarkers.length === 0) return;
+
+  priorityLoopIndex = 0;
+
+  // Every 7 seconds fly to next "due" site
+  priorityLoopTimer = setInterval(() => {
+    const marker = priorityMarkers[priorityLoopIndex];
+    if (!marker) return;
+
+    const latlng = marker.getLatLng();
+    map.flyTo(latlng, 9, { duration: 1.8 });
+
+    priorityLoopIndex = (priorityLoopIndex + 1) % priorityMarkers.length;
+  }, 7000);
 }
 
 //-------------------------------------------------------------
@@ -102,20 +126,22 @@ function renderSites(sites) {
   let countAfter = 0;
 
   const dueSites = [];
-  const markers = [];
-  const priority = [];
+  const allMarkers = [];
+  const priorityMarkers = [];
 
   sites.forEach((s) => {
     const days = dateDiff(s.fuelDate);
     const { label, color } = getStatus(days);
 
     if (days !== null) {
-      if (days <= 0) countDue++;
-      else if (days === 1) countTomorrow++;
-      else if (days === 2) countAfter++;
+      if (days <= 0) countDue += 1;
+      else if (days === 1) countTomorrow += 1;
+      else if (days >= 2) countAfter += 1;
     }
 
-    if (label === "due") dueSites.push(s);
+    if (label === "due") {
+      dueSites.push(s);
+    }
 
     const marker = L.circleMarker([s.lat, s.lng], {
       radius: 9,
@@ -125,36 +151,50 @@ function renderSites(sites) {
       weight: 2,
     }).addTo(markerLayer);
 
-    markers.push(marker);
-    if (label === "due") priority.push(marker);
+    marker.bindPopup(
+      `<strong>${s.siteName}</strong><br/>Fueling: ${formatDate(s.fuelDate)}`
+    );
+
+    allMarkers.push(marker);
+    if (label === "due") priorityMarkers.push(marker);
   });
 
-  // UPDATE METRICS
-  metricTotal.textContent = sites.length;
+  // METRICS
+  metricTotal.textContent = sites.length; // all Central + ON-AIR / In Progress from backend
   metricDue.textContent = countDue;
   metricTomorrow.textContent = countTomorrow;
   metricAfter.textContent = countAfter;
 
-  // AUTO ZOOM
-  if (priority.length > 0) {
-    map.fitBounds(L.featureGroup(priority).getBounds().pad(0.4));
-  } else if (markers.length > 0) {
-    map.fitBounds(L.featureGroup(markers).getBounds().pad(0.3));
+  // MAP BOUNDS
+  if (priorityMarkers.length > 0) {
+    const group = L.featureGroup(priorityMarkers);
+    map.fitBounds(group.getBounds().pad(0.4));
+  } else if (allMarkers.length > 0) {
+    const group = L.featureGroup(allMarkers);
+    map.fitBounds(group.getBounds().pad(0.3));
   }
 
-  // POPULATE DUE LIST
+  // DUE LIST
   dueList.innerHTML = "";
   if (dueSites.length === 0) {
     dueList.innerHTML = `<li class="empty-row">No sites due today.</li>`;
   } else {
-    dueSites.forEach((s) => {
-      dueList.innerHTML += `
-        <li class="site-item">
+    // sort by date ascending (oldest first)
+    dueSites
+      .sort((a, b) => a.fuelDate - b.fuelDate)
+      .forEach((s) => {
+        const li = document.createElement("li");
+        li.className = "site-item";
+        li.innerHTML = `
           <div class="site-name">${s.siteName}</div>
           <div class="site-date">${formatDate(s.fuelDate)}</div>
-        </li>`;
-    });
+        `;
+        dueList.appendChild(li);
+      });
   }
+
+  // start loop over red markers
+  startPriorityLoop(priorityMarkers);
 }
 
 //-------------------------------------------------------------
@@ -163,23 +203,35 @@ function renderSites(sites) {
 async function fetchAndRender() {
   try {
     toggleLoading(true);
+    errorBanner.classList.add("hidden");
 
-    const response = await fetch(DATA_URL);
+    const response = await fetch(DATA_URL, { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
     const json = await response.json();
 
-    const sites = json.map((item) => ({
-      siteName: item.SiteName,
-      lat: parseFloat(item.lat),
-      lng: parseFloat(item.lng),
-      fuelDate: parseDate(item.NextFuelingPlan),
-    }));
+    // json comes from Python: already filtered to
+    // Central + (ON-AIR / IN PROGRESS) + valid date + coords
+    const sites = json
+      .map((item) => ({
+        siteName: item.SiteName,
+        lat: parseFloat(item.lat),
+        lng: parseFloat(item.lng),
+        fuelDate: parseDate(item.NextFuelingPlan),
+      }))
+      .filter(
+        (s) =>
+          s.siteName &&
+          !Number.isNaN(s.lat) &&
+          !Number.isNaN(s.lng) &&
+          s.fuelDate !== null
+      );
 
     renderSites(sites);
-
   } catch (err) {
     console.error(err);
-    errorBanner.classList.remove("hidden");
     errorBanner.textContent = "Failed to load data.";
+    errorBanner.classList.remove("hidden");
   } finally {
     toggleLoading(false);
   }
