@@ -1,0 +1,30 @@
+[
+  {
+    "SiteName": "COW552",
+    "CityName": "Riyadh",
+    "NextFuelingPlan": "2025-11-24",
+    "lat": 24.7136,
+    "lng": 46.6753
+  },
+  {
+    "SiteName": "COW777",
+    "CityName": "Buraydah",
+    "NextFuelingPlan": "2025-11-22",
+    "lat": 26.332,
+    "lng": 43.9736
+  },
+  {
+    "SiteName": "COW123",
+    "CityName": "Riyadh",
+    "NextFuelingPlan": "2025-11-19",
+    "lat": 24.7136,
+    "lng": 46.6753
+  },
+  {
+    "SiteName": "COW305",
+    "CityName": "Al Kharj",
+    "NextFuelingPlan": "2025-11-20",
+    "lat": 24.1556,
+    "lng": 47.3121
+  }
+]
