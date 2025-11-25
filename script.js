@@ -1,28 +1,28 @@
 //-------------------------------------------------------------
-// CONFIG
+// CONFIG – Your Google Apps Script Live JSON API
 //-------------------------------------------------------------
 const DATA_URL =
-  "https://script.google.com/macros/s/AKfycbwmlFSbFAF1evWMhwSpPNRe4dE7VTmCVaIXMPNePm7FGxIQ76VNgSYnLZqGsa9zTlIe/exec";
+  "https://script.googleusercontent.com/macros/echo?user_content_key=AehSKLjQgBfExAaCrs1fPK2D13P-Q4wEl2lTVCfSlDDPmLAyyTwqnFUZKTIgvqFvMfNAhH0Hc1gkifmvyip_YHW_yUQpfm_FHRSC-3M8wcs5BLQ0TToBWQPlCCB2z5VdfhgvruGBQEADBHXU-9ul&lib=MgJeKj1MW7JeQ0FRIvHVq-CVVrHB_XxFM";
 
 const ONE_DAY = 24 * 60 * 60 * 1000;
 
 const COLOR = {
-  DUE: "#fb6d5d",
-  TOMORROW: "#ffc857",
-  AFTER: "#ff9f1c",
-  HEALTHY: "#3ad17c",
+  DUE: "#fb6d5d",        // red
+  TOMORROW: "#ffc857",   // yellow
+  AFTER: "#ff9f1c",      // orange
+  HEALTHY: "#3ad17c",    // green
 };
 
 //-------------------------------------------------------------
-// MAP INITIALIZATION
+// MAP INITIALIZATION – Saudi Arabia Bounds
 //-------------------------------------------------------------
 const map = L.map("map", {
   maxBounds: [
     [16.0, 34.0],
-    [33.5, 56.0],
+    [33.5, 56.0]
   ],
   maxBoundsViscosity: 0.8,
-  minZoom: 5
+  minZoom: 4,
 }).setView([23.8859, 45.0792], 6);
 
 L.tileLayer(
@@ -39,12 +39,22 @@ const metricTotal = document.getElementById("metric-total");
 const metricDue = document.getElementById("metric-due");
 const metricTomorrow = document.getElementById("metric-tomorrow");
 const metricAfter = document.getElementById("metric-after");
+
 const dueList = document.getElementById("due-list");
+const loader = document.getElementById("loader");
+const errorBanner = document.getElementById("error");
 
-function parseDate(val) {
-  if (!val) return null;
+function toggleLoading(state) {
+  loader.classList.toggle("hidden", !state);
+}
 
-  const dt = new Date(val);
+//-------------------------------------------------------------
+// DATE HELPERS
+//-------------------------------------------------------------
+function parseDate(str) {
+  if (!str) return null;
+
+  const dt = new Date(str);
   if (isNaN(dt)) return null;
 
   dt.setHours(0, 0, 0, 0);
@@ -56,8 +66,16 @@ function dateDiff(dt) {
   today.setHours(0, 0, 0, 0);
 
   if (!dt) return null;
-
   return Math.round((dt - today) / ONE_DAY);
+}
+
+function formatDate(dt) {
+  if (!dt) return "-";
+  return dt.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 function getStatus(days) {
@@ -69,7 +87,7 @@ function getStatus(days) {
 }
 
 //-------------------------------------------------------------
-// RENDER MAP + METRICS
+// RENDER SITES ON DASHBOARD
 //-------------------------------------------------------------
 function renderSites(sites) {
   markerLayer.clearLayers();
@@ -77,18 +95,20 @@ function renderSites(sites) {
   let countDue = 0;
   let countTomorrow = 0;
   let countAfter = 0;
-  let dueSites = [];
-  let markers = [];
-  let priority = [];
+
+  const dueSites = [];
+  const markers = [];
+  const priority = [];
 
   sites.forEach((s) => {
-    const dt = parseDate(s.NextFuelingPlan);
-    const days = dateDiff(dt);
+    const days = dateDiff(s.fuelDate);
     const { label, color } = getStatus(days);
 
-    if (label === "due") countDue++;
-    if (label === "tomorrow") countTomorrow++;
-    if (label === "after") countAfter++;
+    if (days !== null) {
+      if (days <= 0) countDue++;
+      else if (days === 1) countTomorrow++;
+      else if (days === 2) countAfter++;
+    }
 
     if (label === "due") dueSites.push(s);
 
@@ -100,71 +120,71 @@ function renderSites(sites) {
       weight: 2,
     }).addTo(markerLayer);
 
-    marker.bindPopup(`<b>${s.SiteName}</b><br>${s.NextFuelingPlan}`);
-
     markers.push(marker);
     if (label === "due") priority.push(marker);
   });
 
+  // Update counters
   metricTotal.textContent = sites.length;
   metricDue.textContent = countDue;
   metricTomorrow.textContent = countTomorrow;
   metricAfter.textContent = countAfter;
 
-  // AUTO-ZOOM
-  if (priority.length) {
-    map.fitBounds(L.featureGroup(priority).getBounds().pad(0.5));
-  } else if (markers.length) {
+  // Auto-zoom logic
+  if (priority.length > 0) {
+    map.fitBounds(L.featureGroup(priority).getBounds().pad(0.4));
+  } else if (markers.length > 0) {
     map.fitBounds(L.featureGroup(markers).getBounds().pad(0.3));
   }
 
-  // DUE LIST
+  // Populate due list
   dueList.innerHTML = "";
-  if (!dueSites.length) {
+  if (dueSites.length === 0) {
     dueList.innerHTML = `<li class="empty-row">No sites due today.</li>`;
   } else {
     dueSites.forEach((s) => {
       dueList.innerHTML += `
         <li class="site-item">
-          <div class="site-name">${s.SiteName}</div>
-          <div class="site-date">${s.NextFuelingPlan}</div>
+          <div class="site-name">${s.siteName}</div>
+          <div class="site-date">${formatDate(s.fuelDate)}</div>
         </li>`;
     });
   }
 }
 
 //-------------------------------------------------------------
-// FETCH LIVE DATA
+// FETCH LIVE FROM GOOGLE SHEET API
 //-------------------------------------------------------------
-async function fetchLiveData() {
+async function fetchAndRender() {
   try {
-    console.log("Fetching live data...");
+    toggleLoading(true);
 
-    const res = await fetch(DATA_URL);
-    const raw = await res.json();
+    const response = await fetch(DATA_URL);
+    const json = await response.json();
 
-    // FILTER ACCORDING TO YOUR BUSINESS RULES
-    const filtered = raw
-      .filter(r => r.regionname?.toLowerCase() === "central")
-      .filter(r => ["ON-AIR", "IN PROGRESS"].includes(String(r.cowstatus).toUpperCase()))
-      .filter(r => r.lat && r.lng)
-      .filter(r => r.nextfuelingplan); // remove blanks
-
-    console.log("Cleaned sites:", filtered.length);
-
-    // Normalize fields
-    const sites = filtered.map(s => ({
-      SiteName: s.sitename,
-      lat: Number(s.lat),
-      lng: Number(s.lng),
-      NextFuelingPlan: s.nextfuelingplan,
-    }));
+    const sites = json
+      .filter(
+        (s) =>
+          s.RegionName?.toLowerCase() === "central" &&
+          ["ON-AIR", "IN-PROGRESS", "IN PROGRESS"].includes(
+            s.COWStatus?.toUpperCase()
+          )
+      )
+      .map((s) => ({
+        siteName: s.siteName,
+        lat: parseFloat(s.lat),
+        lng: parseFloat(s.lng),
+        fuelDate: parseDate(s.NextFuelingPlan),
+      }));
 
     renderSites(sites);
-
   } catch (err) {
-    console.error("Failed to load live API:", err);
+    console.error(err);
+    errorBanner.classList.remove("hidden");
+    errorBanner.textContent = "Failed to load data.";
+  } finally {
+    toggleLoading(false);
   }
 }
 
-fetchLiveData();
+fetchAndRender();
