@@ -2,10 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Central Fuel Plan Dashboard</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Central Fuel Plan Dashboard</title>
 
-  <!-- Leaflet -->
+  <!-- Leaflet CSS -->
   <link
     rel="stylesheet"
     href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -15,50 +15,86 @@
 
   <link rel="stylesheet" href="style.css" />
 </head>
+
 <body>
   <div class="dashboard">
-    <header class="summary-panel">
+
+    <!-- LEFT PANEL -->
+    <div class="summary-panel">
+
       <div class="summary-header">
-        <h1>Total Central sites</h1>
+        <h1>Total Central Sites</h1>
         <p>Fueling schedule overview</p>
       </div>
+
+      <!-- METRICS -->
       <div class="summary-metrics">
+
         <div class="summary-metric">
-          <span>Due and today fueling</span>
+          <span>Total Sites</span>
+          <strong id="metric-total">0</strong>
+        </div>
+
+        <div class="summary-metric">
+          <span>Due / Today</span>
           <strong id="metric-due">0</strong>
         </div>
+
         <div class="summary-metric">
-          <span>Tomorrow sites need fueling</span>
+          <span>Tomorrow</span>
           <strong id="metric-tomorrow">0</strong>
         </div>
+
         <div class="summary-metric">
-          <span>After tomorrow sites need fuel</span>
+          <span>After Tomorrow</span>
           <strong id="metric-after">0</strong>
         </div>
+
       </div>
 
+      <!-- DUE SITES TABLE -->
       <div class="table-card">
         <div class="table-header">
           <span>Site Name</span>
-          <span>Fueling date</span>
+          <span>Fueling Date</span>
         </div>
         <ul id="due-list" class="site-list"></ul>
       </div>
 
+      <!-- LEGEND -->
       <div class="legend">
-        <div class="legend-item legend-due">
-          <span class="legend-dot"></span>
-          <span>Due</span>
+        <div class="legend-item">
+          <span class="legend-dot" style="background:#fb6d5d;"></span>
+          <span>Due / Today</span>
         </div>
-        <div class="legend-item legend-safe">
-          <span class="legend-dot"></span>
-          <span>Fueling date</span>
+
+        <div class="legend-item">
+          <span class="legend-dot" style="background:#ffc857;"></span>
+          <span>Tomorrow</span>
+        </div>
+
+        <div class="legend-item">
+          <span class="legend-dot" style="background:#ff9f1c;"></span>
+          <span>After Tomorrow</span>
+        </div>
+
+        <div class="legend-item">
+          <span class="legend-dot" style="background:#3ad17c;"></span>
+          <span>Healthy</span>
         </div>
       </div>
 
-    <main class="map-panel">
+      <!-- LOADER + ERROR -->
+      <div id="loader" style="color:#9fb2c9; margin-top:10px;">Loading...</div>
+      <div id="error" class="hidden" style="color:#fb6d5d; margin-top:6px;">Failed to load data.</div>
+
+    </div>
+
+    <!-- RIGHT MAP PANEL -->
+    <div class="map-panel">
       <div id="map"></div>
-    </main>
+    </div>
+
   </div>
 
   <!-- Leaflet JS -->
