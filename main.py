@@ -86,40 +86,57 @@ def _pick_column(df: pd.DataFrame, candidates: Sequence[str]) -> Optional[str]:
     return next((c for c in df.columns if c in candidates), None)
 
 
-# -------------------------------------------------------
-# CLEAN + FILTER
-# -------------------------------------------------------
 def clean_and_filter(df: pd.DataFrame) -> Tuple[pd.DataFrame, bool]:
-    """Prepare the dataset and enforce Central-only rows."""
-
     df = df.copy()
     df.columns = _normalize_columns(df.columns)
 
-    site_candidates = ["b", "sitename", "site", "cowid", "siteno", "name"]
-    city_candidates = ["f", "cityname", "city", "location", "area"]
-    date_candidates = ["aj", "nextfuelingplan", "nextfueldate", "fueldate", "fuelplan"]
-    region_candidates = ["d", "region", "cluster", "area", "zone"]
+    # Column mappings
+    site_candidates = ["b", "sitename", "site", "cowid", "name"]
+    region_candidates = ["d", "region", "cluster"]
+    status_candidates = ["j", "cowstatus", "status"]
+    date_candidates = ["aj", "nextfuelingplan", "nextfueldate"]
     lat_candidates = ["l", "lat", "latitude"]
-    lng_candidates = ["m", "lng", "lon", "long", "longitude"]
+    lng_candidates = ["m", "lng", "lon", "longitude"]
 
     site_col = _pick_column(df, site_candidates)
-    city_col = _pick_column(df, city_candidates)
-    date_col = _pick_column(df, date_candidates)
     region_col = _pick_column(df, region_candidates)
+    status_col = _pick_column(df, status_candidates)
+    date_col = _pick_column(df, date_candidates)
     lat_col = _pick_column(df, lat_candidates)
     lng_col = _pick_column(df, lng_candidates)
 
-    if site_col is None:
-        df["sitename"] = "Unknown"
-        site_col = "sitename"
+    # Normalize fields
+    df[site_col] = df[site_col].astype(str).str.strip()
+    df[region_col] = df[region_col].astype(str).str.strip().str.lower()
+    df[status_col] = df[status_col].astype(str).str.strip().str.upper()
 
-    if city_col is None:
-        df["cityname"] = "Unknown"
-        city_col = "cityname"
+    # 🔥 FILTER 1: Region = "central"
+    df = df[df[region_col] == "central"]
 
-    if date_col is None:
-        df["nextfuelingplan"] = pd.NaT
-        date_col = "nextfuelingplan"
+    # 🔥 FILTER 2: COWStatus must be ON-AIR or IN PROGRESS
+    df = df[df[status_col].isin(["ON-AIR", "IN PROGRESS"])]
+
+    # 🔥 FILTER 3: Only valid dates
+    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    df = df.dropna(subset=[date_col])
+
+    # Extract cleaned dataset
+    df_clean = df[[site_col, region_col, status_col, date_col]].copy()
+    df_clean.rename(columns={
+        site_col: "SiteName",
+        region_col: "Region",
+        status_col: "COWStatus",
+        date_col: "NextFuelingPlan"
+    }, inplace=True)
+
+    # Coordinates
+    has_coordinates = lat_col is not None and lng_col is not None
+    if has_coordinates:
+        df_clean["lat"] = df[lat_col]
+        df_clean["lng"] = df[lng_col]
+
+    return df_clean, has_coordinates
+
 
     # -----------------------------------------------------------
     # NEW: Exclude all non-date values from AJ column
